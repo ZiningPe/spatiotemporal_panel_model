@@ -188,6 +188,37 @@ def simulate_FE(n_side, delta0, beta0, theta0, sigma_xi2, delta_c, rho_M, seed):
     Y   = linalg.solve(np.eye(N) - delta0*W, rhs)
     return Y, X, W, W_S, M, h, Z_W, eps, bar_eps, xi, alpha_i
 
+
+SIGMA_MU2 = 0.25   # RE variance σ²_μ  (σ_μ = 0.5)
+
+
+def simulate_RE(n_side, delta0, beta0, theta0, sigma_xi2, delta_c, rho_M, seed,
+                sigma_mu2=SIGMA_MU2):
+    """
+    DGP with random individual effects μ_i ~ iid N(0, σ²_μ)  (L = T entry eq).
+
+    Returns
+    -------
+    Y, X, W, W_S, M, h, Z_W, eps, bar_eps, xi, mu_i, sigma_mu2
+    """
+    rng = np.random.default_rng(seed)
+    n   = n_side ** 2;  N = n * T
+    W_S = rook_weights(n_side)
+    M   = temporal_matrix(T, rho_M)
+    W   = build_stwm(M, W_S)
+    mu_i   = rng.normal(0, np.sqrt(sigma_mu2), n)
+    re_vec = np.tile(mu_i, T)                    # time-major stacking
+    X   = rng.standard_normal((N, 1))
+    Z_W = rng.standard_normal((T, 2))
+    eps = rng.standard_normal(T)
+    h   = Z_W @ np.array([1.0, 0.8]) + eps
+    bar_eps = np.repeat(eps, n)
+    xi      = rng.standard_normal(N) * np.sqrt(sigma_xi2)
+    V       = delta_c * bar_eps + xi
+    rhs = re_vec + X.ravel()*beta0 + (W@X).ravel()*theta0 + V
+    Y   = linalg.solve(np.eye(N) - delta0*W, rhs)
+    return Y, X, W, W_S, M, h, Z_W, eps, bar_eps, xi, mu_i, sigma_mu2
+
 # ═════════════════════════════════════════════════════════════════════════════
 # §3  ESTIMATORS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -421,8 +452,8 @@ def cf_gmm_step(Y, X, W, beh, max_iter=2, sigma2_init=1.):
 
 def within_transform(Y, X, n, beh=None):
     """
-    Within (unit) demeaning for time-major stacked data.
-    Returns Y_dm (N,), X_dm (N,k), and optionally beh_dm (N,).
+    Within (unit) demeaning  D = Q_T ⊗ I_n  for time-major stacked data.
+    Returns Y_circ (N,), X_circ (N,k), and optionally beh_circ (N,).
     """
     TT   = len(Y) // n
     Y_dm = (Y.reshape(TT, n) - Y.reshape(TT, n).mean(0)).ravel()
@@ -432,6 +463,169 @@ def within_transform(Y, X, n, beh=None):
         b_dm = (beh.reshape(TT, n) - beh.reshape(TT, n).mean(0)).ravel()
         return Y_dm, X_dm, b_dm
     return Y_dm, X_dm
+
+
+def _d(v, n):
+    """Apply D = Q_T ⊗ I_n to a panel vector/matrix (time-major stacking)."""
+    TT = len(v) // n
+    if v.ndim == 1:
+        return (v.reshape(TT, n) - v.reshape(TT, n).mean(0)).ravel()
+    k = v.shape[1]
+    return (v.reshape(TT, n, k) - v.reshape(TT, n, k).mean(0)).reshape(-1, k)
+
+
+def cf_2sls_fe(Y, X, W, beh, n):
+    """
+    CF-2SLS with FE within-transformation (Section 6.1).
+
+    Applies D = Q_T ⊗ I_n to each term separately (D and W do NOT commute):
+        Ũ_circ = [ D(WY),  X_circ,  D(WX),  ε_circ ]
+        Q_circ = [ X_circ, D(WX),   D(W²X), ε_circ ]
+
+    Returns kappa = (delta, beta, theta, delta_c).
+    """
+    beh  = np.asarray(beh, float)
+    WY   = W @ Y;      WX  = W @ X;    W2X = W @ WX
+    Y_c  = _d(Y,   n); X_c = _d(X,   n)
+    DWY  = _d(WY,  n); DWX = _d(WX,  n); DW2X = _d(W2X, n)
+    eps_c = _d(beh, n)
+
+    U_t = np.column_stack([DWY[:, None], X_c, DWX, eps_c])
+    Q_c = np.column_stack([X_c, DWX, DW2X, eps_c])
+    Qi  = linalg.pinv(Q_c.T @ Q_c)
+    PU  = Q_c @ (Qi @ (Q_c.T @ U_t))
+    try:
+        k = linalg.solve(PU.T @ U_t, PU.T @ Y_c)
+    except linalg.LinAlgError:
+        k = np.full(4, np.nan)
+    return k   # (delta, beta, theta, delta_c)
+
+
+def _profile_ll_fe(delta, DY, DWY, R_circ, logdet_fn):
+    """
+    Negative profile log-likelihood for FE model (Section 6.1).
+    Residual: D(Y - δWY) = DY - δ*D(WY).  Log-det uses original W.
+    """
+    N       = len(DY)
+    SY_circ = DY - delta * DWY
+    Ri      = linalg.pinv(R_circ.T @ R_circ)
+    r       = SY_circ - R_circ @ (Ri @ (R_circ.T @ SY_circ))
+    s2      = float(r @ r) / N
+    if s2 <= 1e-14:
+        return np.inf
+    ld = logdet_fn(delta)
+    if not np.isfinite(ld):
+        return np.inf
+    return N/2*(1 + np.log(2*np.pi*s2)) - ld
+
+
+def cf_qmle_fe(Y, X, W, W_S, M, beh, n, n_grid=60):
+    """
+    CF-QMLE with FE within-transformation (Section 6.1).
+    Profile LL residual: D(Y-δWY) - R_circ*α.
+    Log-det still involves original W (Kronecker structure preserved for det).
+    Returns kappa = (delta, beta, theta, delta_c, sigma2).
+    """
+    beh  = np.asarray(beh, float)
+    WY   = W @ Y;      WX  = W @ X
+    DY   = _d(Y,   n); DWY = _d(WY,  n)
+    DX   = _d(X,   n); DWX = _d(WX,  n)
+    eps_c = _d(beh, n)
+    R_circ = np.column_stack([DX, DWX, eps_c])   # (N, 3)
+
+    eM  = linalg.eigvals(M).real
+    eWS = linalg.eigvals(W_S).real
+    logdet_fn = lambda d: logdet_kron(d, eM, eWS)
+
+    prod = np.outer(eM, eWS).ravel()
+    pos  = prod[prod > 0];  neg = prod[prod < 0]
+    lo   = max(-1./pos.max() if len(pos) else -0.9999, -0.9999)
+    hi   = min(-1./neg.min() if len(neg) else  0.9999,  0.9999)
+    lo  += 1e-4*(hi-lo);  hi -= 1e-4*(hi-lo)
+
+    grid = np.linspace(lo, hi, n_grid)
+    ll_g = [_profile_ll_fe(d, DY, DWY, R_circ, logdet_fn) for d in grid]
+    bi   = int(np.argmin(ll_g))
+    d_lo = grid[max(bi-2, 0)];  d_hi = grid[min(bi+2, n_grid-1)]
+    res  = optimize.minimize_scalar(
+        lambda d: _profile_ll_fe(d, DY, DWY, R_circ, logdet_fn),
+        bounds=(d_lo, d_hi), method="bounded",
+        options={"xatol": 1e-9, "maxiter": 500})
+    dh = float(res.x)
+
+    N       = len(DY)
+    SY_circ = DY - dh * DWY
+    Ri      = linalg.pinv(R_circ.T @ R_circ)
+    ah      = Ri @ (R_circ.T @ SY_circ)
+    r       = SY_circ - R_circ @ ah
+    s2      = float(r @ r) / N
+    return np.concatenate([[dh], ah, [s2]])   # (delta, beta, theta, delta_c, sigma2)
+
+
+def re_gls_transform(v, n, TT, sigma_xi, sigma_mu):
+    """
+    Apply Ω^{-1/2} to a panel vector/matrix (Section 6.2, time-major stacking).
+
+    Ω = σ²_ξ I_N + σ²_μ (J_T ⊗ I_n)
+
+    Ω^{-1/2} v = (1/σ_ξ) * [v - (1-ψ) * v̄_unit],
+        ψ = σ_ξ / sqrt(σ²_ξ + T·σ²_μ),  v̄_unit = unit time-mean repeated T times.
+    """
+    psi    = sigma_xi / np.sqrt(sigma_xi**2 + TT * sigma_mu**2)
+    if v.ndim == 1:
+        v_mean = v.reshape(TT, n).mean(0)          # (n,)
+        v_mean_tiled = np.tile(v_mean, TT)
+        return (v - (1 - psi) * v_mean_tiled) / sigma_xi
+    k = v.shape[1]
+    v_mean = v.reshape(TT, n, k).mean(0)           # (n, k)
+    v_mean_tiled = np.tile(v_mean, (TT, 1))
+    return (v - (1 - psi) * v_mean_tiled) / sigma_xi
+
+
+def cf_2sls_re(Y, X, W, beh, n, sigma_xi2=None, sigma_mu2=SIGMA_MU2):
+    """
+    Feasible GLS CF-2SLS for random effects (Section 6.2).
+
+    Estimates σ²_ξ from within residuals, uses supplied/estimated σ²_μ.
+    Applies Ω^{-1/2} to each term separately (Ω^{-1/2} and W don't commute):
+        Ỹ = Ω^{-1/2}Y,  etc.  Endogenous regressor: Ω^{-1/2}(WY).
+    Returns kappa = (delta, beta, theta, delta_c).
+    """
+    beh = np.asarray(beh, float)
+    TT  = len(Y) // n
+
+    # Step 1: within-residual estimate of σ²_ξ (if not supplied)
+    if sigma_xi2 is None:
+        k_fe = cf_2sls_fe(Y, X, W, beh, n)
+        if not np.all(np.isfinite(k_fe)):
+            k_fe = np.zeros(4); k_fe[1] = 1.
+        WY_fe = W @ Y; WX_fe = W @ X
+        xi_fe = (Y - k_fe[0]*WY_fe - (X @ k_fe[1:2]).ravel()
+                   - (WX_fe @ k_fe[2:3]).ravel() - beh*k_fe[3])
+        sigma_xi2 = max(float(xi_fe @ xi_fe) / (len(Y) - 4), 1e-6)
+
+    sigma_xi = np.sqrt(sigma_xi2)
+    sigma_mu = np.sqrt(sigma_mu2)
+
+    # Step 2: GLS transform each term separately
+    WY  = W @ Y;    WX  = W @ X;    W2X = W @ WX
+    Yt  = re_gls_transform(Y,   n, TT, sigma_xi, sigma_mu)
+    Xt  = re_gls_transform(X,   n, TT, sigma_xi, sigma_mu)
+    WYt = re_gls_transform(WY,  n, TT, sigma_xi, sigma_mu)
+    WXt = re_gls_transform(WX,  n, TT, sigma_xi, sigma_mu)
+    W2Xt= re_gls_transform(W2X, n, TT, sigma_xi, sigma_mu)
+    bht = re_gls_transform(beh, n, TT, sigma_xi, sigma_mu)
+
+    # Step 3: CF-2SLS on transformed system
+    U_t = np.column_stack([WYt[:, None], Xt, WXt, bht])
+    Q_t = np.column_stack([Xt, WXt, W2Xt, bht])
+    Qi  = linalg.pinv(Q_t.T @ Q_t)
+    PU  = Q_t @ (Qi @ (Q_t.T @ U_t))
+    try:
+        k = linalg.solve(PU.T @ U_t, PU.T @ Yt)
+    except linalg.LinAlgError:
+        k = np.full(4, np.nan)
+    return k   # (delta, beta, theta, delta_c)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # §4  FORMATTING HELPERS
@@ -712,75 +906,132 @@ def run_table3(verbose=True):
 
 # ═════════════════════════════════════════════════════════════════════════════
 # §8  TABLE 4
-# Fixed-effects (within-unit) transformation + CF estimators
-# Pooled CF (ignores FE, biased) vs Within CF-2SLS vs Within CF-QMLE
+# ═════════════════════════════════════════════════════════════════════════════
+# §8  TABLE 4
+# Panel A: FE DGP  — Pooled CF-2SLS | FE-CF-2SLS (§6.1) | FE-CF-QMLE (§6.1)
+# Panel B: RE DGP  — Pooled CF-2SLS | FE-CF-2SLS          | RE-CF-FGLS (§6.2)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _one_rep_t4(ns, dc, seed):
+def _one_rep_t4_fe(ns, dc, seed):
     Y, X, W, W_S, M, h, Z_W, eps, _, xi, _ = simulate_FE(
         ns, DELTA0, BETA0, THETA0, SIGMA_XI2, dc, RHO_M, seed)
     n   = ns**2
     eh  = first_stage(h, Z_W)
     beh = aggregate_eps(eh, n)
 
-    # 1) Pooled CF-2SLS (no FE correction — biased benchmark)
+    # 1) Pooled CF-2SLS (ignores FE — biased benchmark)
     k_pool = cf_2sls(Y, X, W, beh)
 
-    # 2) Within-transformed CF-2SLS
-    Y_dm, X_dm, b_dm = within_transform(Y, X, n, beh)
-    k_fe2 = cf_2sls(Y_dm, X_dm, W, b_dm)
+    # 2) FE-CF-2SLS: D(WY) as endogenous regressor (Section 6.1)
+    k_fe2  = cf_2sls_fe(Y, X, W, beh, n)
 
-    # 3) Within-transformed CF-QMLE
-    kq_fe = cf_qmle(Y_dm, X_dm, W, W_S, M, b_dm)
+    # 3) FE-CF-QMLE: profile LL with D(Y-δWY) residual (Section 6.1)
+    kq_fe  = cf_qmle_fe(Y, X, W, W_S, M, beh, n)
 
     return k_pool[0], k_fe2[0], kq_fe[0]
 
 
+def _one_rep_t4_re(ns, dc, seed):
+    Y, X, W, W_S, M, h, Z_W, eps, _, xi, mu_i, sm2 = simulate_RE(
+        ns, DELTA0, BETA0, THETA0, SIGMA_XI2, dc, RHO_M, seed)
+    n   = ns**2
+    eh  = first_stage(h, Z_W)
+    beh = aggregate_eps(eh, n)
+
+    # 1) Pooled CF-2SLS (ignores RE)
+    k_pool = cf_2sls(Y, X, W, beh)
+
+    # 2) FE-CF-2SLS (within; consistent but inefficient under RE)
+    k_fe2  = cf_2sls_fe(Y, X, W, beh, n)
+
+    # 3) RE feasible GLS CF-2SLS (Section 6.2)
+    k_re   = cf_2sls_re(Y, X, W, beh, n, sigma_mu2=sm2)
+
+    return k_pool[0], k_fe2[0], k_re[0]
+
+
 def run_table4(verbose=True):
-    _banner("TABLE 4  Fixed-Effects + CF Estimators — True δ=0.3, unit FE present")
-    print(f"  {'':18s}  {'Pooled CF-2SLS':^26s}  {'Within CF-2SLS':^26s}  {'Within CF-QMLE':^26s}")
-    hline(width=104)
+    _banner("TABLE 4  Individual Effects + CF Estimators — True δ=0.3")
+
+    def _fmt3(arr):
+        bias, std, rmse = compute_summary(arr, DELTA0)
+        if np.isnan(bias): return "  —  ", "  —  ", "  —  "
+        return format_cell(bias, std, rmse, w=7)
 
     store = {}
+
+    # ── Panel A: Fixed Effects ────────────────────────────────────────────────
+    col_a = ["Pooled CF-2SLS", "FE-CF-2SLS (§6.1)", "FE-CF-QMLE (§6.1)"]
+    print(f"\n  Panel A: FE DGP — μ_i fixed, σ_μ=0.5")
+    print(f"  {'':18s}  " + "  ".join(f"{c:^26s}" for c in col_a))
+    hline(width=112)
     for dc in [0.0, 0.5]:
         print(f"  δ_c = {dc:.1f}")
         for (label, ns) in [("n=49, N=245", N_SIDE_S), ("n=100, N=500", N_SIDE_L)]:
-            if verbose: print(f"    {label}, δ_c={dc} ...", flush=True)
+            if verbose: print(f"    FE {label}, δ_c={dc} ...", flush=True)
             rng   = np.random.default_rng(4000 + ns + int(dc*100))
             seeds = rng.integers(0, 2**31, size=REPS)
             pool=[]; fe2=[]; feq=[]
             for r in range(REPS):
                 try:
-                    kp, k2, kq = _one_rep_t4(ns, dc, int(seeds[r]))
+                    kp, k2, kq = _one_rep_t4_fe(ns, dc, int(seeds[r]))
                     if np.isfinite(kp): pool.append(kp)
                     if np.isfinite(k2): fe2.append(k2)
                     if np.isfinite(kq): feq.append(kq)
                 except Exception:
                     pass
-            pool = np.array(pool); fe2 = np.array(fe2); feq = np.array(feq)
-            store[(ns, dc)] = dict(pool=pool, fe2=fe2, feq=feq)
-
-            def _fmt3(arr):
-                bias, std, rmse = compute_summary(arr, DELTA0)
-                if np.isnan(bias): return "  —  ", "  —  ", "  —  "
-                return format_cell(bias, std, rmse, w=7)
+            pool=np.array(pool); fe2=np.array(fe2); feq=np.array(feq)
+            store[("FE", ns, dc)] = dict(pool=pool, fe2=fe2, feq=feq)
 
             L0p,L1p,L2p = _fmt3(pool)
             L0f,L1f,L2f = _fmt3(fe2)
             L0q,L1q,L2q = _fmt3(feq)
             pref = [f"  {label:<18s}", "  "+" "*18, "  "+" "*18]
-            rows = [(L0p,L0f,L0q), (L1p,L1f,L1q), (L2p,L2f,L2q)]
-            for i,(a,b,c) in enumerate(rows):
+            for i,(a,b,c) in enumerate([(L0p,L0f,L0q),(L1p,L1f,L1q),(L2p,L2f,L2q)]):
                 print(pref[i] + f"  {a:^26s}  {b:^26s}  {c:^26s}")
             print()
-        hline(width=104)
-        print()
+        hline(width=112)
+    print("  Pooled ignores FE → biased.  FE-CF uses D=Q_T⊗I_n on each term (§6.1).")
 
-    print("  Bias/Std/RMSE for δ̂.  Pooled ignores unit FE → biased.")
-    print("  Within-CF uses unit demeaning before CF-2SLS / CF-QMLE.")
+    # ── Panel B: Random Effects ───────────────────────────────────────────────
+    col_b = ["Pooled CF-2SLS", "FE-CF-2SLS", "RE-CF-FGLS (§6.2)"]
+    print(f"\n  Panel B: RE DGP — μ_i ~ N(0, σ²_μ=0.25)")
+    print(f"  {'':18s}  " + "  ".join(f"{c:^26s}" for c in col_b))
+    hline(width=112)
+    for dc in [0.0, 0.5]:
+        print(f"  δ_c = {dc:.1f}")
+        for (label, ns) in [("n=49, N=245", N_SIDE_S), ("n=100, N=500", N_SIDE_L)]:
+            if verbose: print(f"    RE {label}, δ_c={dc} ...", flush=True)
+            rng   = np.random.default_rng(4100 + ns + int(dc*100))
+            seeds = rng.integers(0, 2**31, size=REPS)
+            pool=[]; fe2=[]; re_=[]
+            for r in range(REPS):
+                try:
+                    kp, k2, kr = _one_rep_t4_re(ns, dc, int(seeds[r]))
+                    if np.isfinite(kp): pool.append(kp)
+                    if np.isfinite(k2): fe2.append(k2)
+                    if np.isfinite(kr): re_.append(kr)
+                except Exception:
+                    pass
+            pool=np.array(pool); fe2=np.array(fe2); re_=np.array(re_)
+            store[("RE", ns, dc)] = dict(pool=pool, fe2=fe2, re=re_)
+
+            L0p,L1p,L2p = _fmt3(pool)
+            L0f,L1f,L2f = _fmt3(fe2)
+            L0r,L1r,L2r = _fmt3(re_)
+            pref = [f"  {label:<18s}", "  "+" "*18, "  "+" "*18]
+            for i,(a,b,c) in enumerate([(L0p,L0f,L0r),(L1p,L1f,L1r),(L2p,L2f,L2r)]):
+                print(pref[i] + f"  {a:^26s}  {b:^26s}  {c:^26s}")
+            print()
+        hline(width=112)
+    print("  FE-CF consistent under RE (conservative).  RE-CF-FGLS efficient (§6.2).")
+
     np.savez("mc_results/table4.npz",
-             **{f"ns{ns}_dc{str(dc).replace('.','')}_fe2": store[(ns,dc)]["fe2"]
-                for ns in [N_SIDE_S, N_SIDE_L] for dc in [0.0, 0.5]})
+             **{f"{dgp}_ns{ns}_dc{str(dc).replace('.','')}_fe2":
+                store[(dgp,ns,dc)].get("fe2", np.array([]))
+                for dgp in ["FE","RE"]
+                for ns in [N_SIDE_S, N_SIDE_L]
+                for dc in [0.0, 0.5]})
     return store
 
 # ═════════════════════════════════════════════════════════════════════════════
