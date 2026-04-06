@@ -1,4 +1,4 @@
-# spatiotemporal_cf
+# spatiotemporal_panel_model
 
 **Control-Function estimators for Spatial Durbin Models with endogenous Spatio-Temporal Weight Matrices (STWM)**
 
@@ -27,13 +27,13 @@ Implements and extends the methodology of *Wang (2025): "Endogenous Spatio-Tempo
 ## Installation
 
 ```bash
-pip install git+https://github.com/YOUR_USERNAME/spatiotemporal_cf.git
+pip install git+https://github.com/YOUR_USERNAME/spatiotemporal_panel_model.git
 ```
 
 Or install locally:
 
 ```bash
-cd spatiotemporal_cf
+cd spatiotemporal_panel_model
 pip install -e .
 ```
 
@@ -45,7 +45,7 @@ pip install -e .
 
 ```python
 import numpy as np
-from spatiotemporal_cf import (
+from spatiotemporal_panel_model import (
     rook_weights, compute_morans_i,
     build_twm_from_stats, build_stwm,
     first_stage, aggregate_eps_hat,
@@ -110,7 +110,7 @@ from the first-stage residuals.
 Instruments: `Q = [X, WX, W²X, ε̄̂]`
 
 ```python
-from spatiotemporal_cf import cf_2sls_fit, cf_2sls_summary
+from spatiotemporal_panel_model import cf_2sls_fit, cf_2sls_summary
 res = cf_2sls_fit(Y, X, W, bar_eps_hat)
 cf_2sls_summary(res)
 ```
@@ -118,7 +118,7 @@ cf_2sls_summary(res)
 With Ω_A variance correction (L = T):
 
 ```python
-from spatiotemporal_cf import cf_2sls_avar_corrected
+from spatiotemporal_panel_model import cf_2sls_avar_corrected
 avar_corr = cf_2sls_avar_corrected(Y, X, W, bar_eps_hat, eps_hat, Z_W,
                                     res["kappa"], n, T)
 ```
@@ -128,7 +128,7 @@ avar_corr = cf_2sls_avar_corrected(Y, X, W, bar_eps_hat, eps_hat, Z_W,
 Kronecker log-det: `ln|I − δW| = Σ_j Σ_k ln|1 − δ·μ_j·λ_k|`
 
 ```python
-from spatiotemporal_cf import cf_qmle
+from spatiotemporal_panel_model import cf_qmle
 res = cf_qmle(Y, X, W, bar_eps_hat, M=M, W_S=W_S)   # Kronecker (fast)
 res = cf_qmle(Y, X, W, bar_eps_hat)                  # full eigenvalue (custom W)
 ```
@@ -136,7 +136,7 @@ res = cf_qmle(Y, X, W, bar_eps_hat)                  # full eigenvalue (custom W
 ### CF-GMM
 
 ```python
-from spatiotemporal_cf import cf_gmm_fit
+from spatiotemporal_panel_model import cf_gmm_fit
 res = cf_gmm_fit(Y, X, W, bar_eps_hat, max_iter=2)
 ```
 
@@ -145,7 +145,7 @@ res = cf_gmm_fit(Y, X, W, bar_eps_hat, max_iter=2)
 ## Temporal weight matrix options
 
 ```python
-from spatiotemporal_cf import (
+from spatiotemporal_panel_model import (
     build_twm_from_stats,   # from Moran's I / Geary's C / Getis-Ord / Gini
     build_twm_parametric,   # exponential / power / linear decay
 )
@@ -162,7 +162,7 @@ M = build_twm_parametric(T, rho=0.6, form="exponential")
 ## Cross-period effects & FDR
 
 ```python
-from spatiotemporal_cf import (
+from spatiotemporal_panel_model import (
     multiplier_matrix, ie_inference,
     bh_correction, multiple_testing_summary, print_ie_table,
 )
@@ -178,8 +178,8 @@ print_ie_table({**ie, **mt})
 ## Package structure
 
 ```
-spatiotemporal_cf/
-├── spatiotemporal_cf/
+spatiotemporal_panel_model/
+├── spatiotemporal_panel_model/
 │   ├── weight_construction.py   # W = M ⊗ W_S, Moran/parametric TWM
 │   ├── first_stage.py           # OLS h = Z_W π + ε → ε̂
 │   ├── control_function.py      # ε̄̂ = A ε̂ (L=T or L=N)
@@ -204,12 +204,12 @@ spatiotemporal_cf/
 ## Citation
 
 ```bibtex
-@software{spatiotemporal_cf2025,
+@software{spatiotemporal_panel_model2025,
   author  = {Wang, Zining},
   title   = {spatiotemporal\_cf: Control-Function Estimators for
              Spatial Durbin Models with Endogenous STWM},
   year    = {2025},
-  url     = {https://github.com/YOUR_USERNAME/spatiotemporal_cf}
+  url     = {https://github.com/YOUR_USERNAME/spatiotemporal_panel_model}
 }
 ```
 

@@ -20,4 +20,4 @@ dev = ["pytest>=7", "pytest-cov", "matplotlib", "tqdm"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["spatiotemporal_cf*"]
+include = ["spatiotemporal_panel_model*"]

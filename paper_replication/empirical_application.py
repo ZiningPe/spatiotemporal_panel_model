@@ -21,7 +21,7 @@ openness, or weather shocks) but is excluded from the structural equation.
 """
 
 import numpy as np
-from spatiotemporal_cf import (
+from spatiotemporal_panel_model import (
     inverse_distance_weights, compute_morans_i,
     build_twm_from_stats, build_stwm, stwm_summary,
     first_stage, first_stage_stats, aggregate_eps_hat,
@@ -100,7 +100,7 @@ def run_empirical():
     avar_corr = cf_2sls_avar_corrected(Y, X, W, bar_eps_hat,
                                         eps_hat, Z_W, res_2sls["kappa"],
                                         n, T)
-    from spatiotemporal_cf import cf_2sls_se
+    from spatiotemporal_panel_model import cf_2sls_se
     se_corr = cf_2sls_se(avar_corr, N)
     print(f"Corrected SE (Ω_A): {np.round(se_corr, 4)}")
 

@@ -1,5 +1,5 @@
 """
-spatiotemporal_cf
+spatiotemporal_panel_model
 =================
 Control-Function estimators for Spatial Durbin Models with endogenous
 Spatio-Temporal Weight Matrices (STWM).
@@ -14,7 +14,7 @@ Integrates and extends the ZiningPe/STWM package with:
 Quick start
 -----------
 >>> import numpy as np
->>> from spatiotemporal_cf import (
+>>> from spatiotemporal_panel_model import (
 ...     rook_weights, build_twm_parametric, build_stwm,
 ...     first_stage, aggregate_eps_hat,
 ...     cf_2sls_fit, cf_qmle, cf_gmm_fit,
