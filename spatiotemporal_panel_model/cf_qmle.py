@@ -241,41 +241,83 @@ def cf_qmle_avar(Y: np.ndarray,
                  logdet_fn,
                  h: float = 1e-5) -> np.ndarray:
     """
-    Numerical Hessian of the profile log-likelihood at δ̂ to approximate
-    Avar(δ̂).
+    Full asymptotic variance of sqrt(N)·(δ̂, α̂) via the numerical Hessian
+    of the joint log-likelihood (Theorem 7).
 
-    For the full parameter vector (δ, α), we return the (k+2)×(k+2) matrix
-    using the concentrated OLS formula.
+    The joint log-likelihood at fixed σ̂² is
+
+        L(δ, α) = log|I−δW| − (N/2)log(2πσ̂²)
+                  − ‖S(δ)Y − Rα‖² / (2σ̂²)
+
+    where S(δ) = I−δW,  R = [X, WX, ε̄̂],  α = (β, θ, δ_c).
+
+    The asymptotic variance is
+
+        AVar(δ̂, α̂) = N · (−∂²L/∂θ∂θ')⁻¹  at θ̂ = (δ̂, α̂).
+
+    Step sizes are scaled to parameter magnitude for numerical stability:
+        h_j = max(h, h · |θ̂_j|).
 
     Parameters
     ----------
-    h : finite-difference step size
+    delta_hat  : estimated δ
+    alpha_hat  : (k+k+1,) estimated (β, θ_coef, δ_c)
+    sigma2_hat : estimated σ² (concentrated value)
+    logdet_fn  : callable(delta) → log|I − δW|
+    h          : base finite-difference step
 
     Returns
     -------
-    avar_delta : scalar, asymptotic variance of sqrt(N)·(δ̂ − δ₀)
+    avar : (2k+2, 2k+2) asymptotic variance matrix of sqrt(N)·(δ̂, α̂)
     """
     Y   = np.asarray(Y, float).ravel()
     X   = np.asarray(X, float)
     if X.ndim == 1:
         X = X[:, None]
     N   = len(Y)
-    R   = np.column_stack([X, W @ X, bar_eps_hat])
+    bar_eps_hat = np.asarray(bar_eps_hat, float).ravel()
+    R   = np.column_stack([X, W @ X, bar_eps_hat])   # (N, k+k+1)
 
-    obj = lambda d: profile_loglik(d, Y, W, R, logdet_fn, sign=+1.0)
+    theta_hat = np.concatenate([[delta_hat], alpha_hat])
+    p = len(theta_hat)   # 2k+2
 
-    # Numerical second derivative of profile log-likelihood
-    d_hi  = obj(delta_hat + h)
-    d_lo  = obj(delta_hat - h)
-    d_ctr = obj(delta_hat)
-    d2_ll = (d_hi + d_lo - 2 * d_ctr) / h ** 2
+    def loglik(theta):
+        delta = float(theta[0])
+        alpha = theta[1:]
+        ld = logdet_fn(delta)
+        if not np.isfinite(ld):
+            return -1e300
+        S   = np.eye(N) - delta * W
+        res = S @ Y - R @ alpha
+        return ld - N / 2.0 * np.log(2.0 * np.pi * sigma2_hat) \
+               - float(res @ res) / (2.0 * sigma2_hat)
 
-    # Information = -d2_ll/N  (per-observation)
-    info = -d2_ll / N
-    if info <= 0:
-        return np.nan
-    avar_delta = 1.0 / info   # AVar of sqrt(N)·(δ̂ − δ₀)
-    return float(avar_delta)
+    # Numerical Hessian via central differences
+    ll0 = loglik(theta_hat)
+    H   = np.zeros((p, p))
+    for i in range(p):
+        hi = max(h, h * abs(float(theta_hat[i])))
+        for j in range(i, p):
+            hj = max(h, h * abs(float(theta_hat[j])))
+            if i == j:
+                ei = np.zeros(p); ei[i] = hi
+                H[i, i] = (loglik(theta_hat + ei)
+                            + loglik(theta_hat - ei) - 2.0 * ll0) / hi ** 2
+            else:
+                ei = np.zeros(p); ei[i] = hi
+                ej = np.zeros(p); ej[j] = hj
+                H[i, j] = (loglik(theta_hat + ei + ej)
+                            - loglik(theta_hat + ei - ej)
+                            - loglik(theta_hat - ei + ej)
+                            + loglik(theta_hat - ei - ej)) / (4.0 * hi * hj)
+                H[j, i] = H[i, j]
+
+    neg_H = -H
+    try:
+        avar = N * linalg.inv(neg_H)
+    except linalg.LinAlgError:
+        avar = N * linalg.pinv(neg_H)
+    return avar   # (2k+2, 2k+2)
 
 
 def qmle_static(Y: np.ndarray,

@@ -101,21 +101,34 @@ def omega_A_simple(Q: np.ndarray,
                    n: int,
                    T: int,
                    delta_c_hat: float,
-                   sigma2_eps: float) -> np.ndarray:
+                   sigma2_eps: float,
+                   Sigma_eps: Optional[np.ndarray] = None) -> np.ndarray:
     """
-    Simplified Ω_A under i.i.d. first-stage errors.
+    Ω_A correction under the block structure A = I_T ⊗ ι_n.
 
-    Avoids materialising the (N, T) aggregation matrix A by exploiting
-    the structure A = I_T ⊗ ι_n:
+    Avoids materialising the (N, T) matrix A:  AtQ[t, :] = Σ_i Q[t·n+i, :].
 
-        AtQ[t, :] = sum of Q rows for period t  (n rows each)
+    Assumption 6 allows a general (T, T) first-stage error covariance Σ_ε.
+    The default (``Sigma_eps=None``) assumes i.i.d. errors, i.e.
+    Σ_ε = σ̂²_ε · I_T.  For heteroskedastic or serially correlated first-
+    stage errors, pass a (T, T) estimate as ``Sigma_eps``; in that case
+    ``sigma2_eps`` is ignored.
+
+    Parameters
+    ----------
+    Q           : (N, m) instrument matrix
+    Z_W         : (T, k_Z) first-stage instruments
+    n, T        : number of spatial units and time periods
+    delta_c_hat : estimated coefficient on ε̄̂
+    sigma2_eps  : first-stage error variance (i.i.d. case)
+    Sigma_eps   : (T, T) error covariance; overrides sigma2_eps if provided
     """
     N, m = Q.shape
     if Z_W.ndim == 1:
         Z_W = Z_W[:, None]
 
-    # Compute A'Q by blocking: reshape Q into (T, n, m), sum over axis 1
-    Q_blk = Q.reshape(T, n, m)          # (T, n, m)
+    # A'Q via block structure
+    Q_blk = Q.reshape(T, n, m)
     AtQ   = Q_blk.sum(axis=1)           # (T, m)
 
     # M_Z = I_T − P_Z
@@ -123,8 +136,11 @@ def omega_A_simple(Q: np.ndarray,
     P_Z     = Z_W @ ZtZ_inv @ Z_W.T
     M_Z     = np.eye(T) - P_Z
 
-    mid   = AtQ.T @ M_Z @ AtQ           # (m, m)
-    omega = delta_c_hat ** 2 * sigma2_eps / N * mid
+    if Sigma_eps is None:
+        Sigma_eps = sigma2_eps * np.eye(T)
+
+    mid   = AtQ.T @ (Sigma_eps @ M_Z) @ AtQ   # (m, m)
+    omega = delta_c_hat ** 2 / N * mid
     return omega
 
 

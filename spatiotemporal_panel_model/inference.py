@@ -84,8 +84,8 @@ def _unit_idx(unit: int, period: int, n: int) -> int:
 
 
 def cross_period_effect(T_mat: np.ndarray,
-                        beta: float,
-                        theta: float,
+                        beta,
+                        theta,
                         W: np.ndarray,
                         n: int,
                         t: int,
@@ -94,58 +94,60 @@ def cross_period_effect(T_mat: np.ndarray,
     """
     Cross-period indirect effect  IE_{r,t←s}  (or average over r).
 
-    IE_{(r,t)←s} = (1/n) Σ_i T_mat[(r,t),(i,s)] · (β + θ·W[(i,s),(i,s)]_col_sum)
+    For k regressors with coefficient vectors β ∈ ℝᵏ and θ ∈ ℝᵏ, the
+    effect at destination (r, t) from source unit i in period s is:
 
-    For simplicity we use the scalar version:
-        IE_{r,t←s} = Σ_i T_mat[(r,t),(i,s)] · (β + θ·col_sum_W_at_(i,s))
+        Σ_j  T_mat[(r,t),(i,s)] · (β_j + θ_j · w_{i,s})
+
+    where w_{i,s} is the row sum of W at row (i,s).  Summing over all
+    source units i and averaging over destinations r gives IE_{t←s}.
+
+    Scalars are accepted for the k=1 case (backward compatible).
 
     Parameters
     ----------
-    T_mat : (N, N) multiplier matrix
-    beta, theta : structural coefficients
-    W     : (N, N) weight matrix
-    n     : number of spatial units
-    t, s  : destination and source time periods
-    r     : destination unit (None → average over all r)
+    T_mat       : (N, N) multiplier matrix
+    beta, theta : scalar or (k,) array of structural coefficients
+    W           : (N, N) weight matrix
+    n           : number of spatial units
+    t, s        : destination and source time periods
+    r           : destination unit (None → average over all r)
 
     Returns
     -------
-    Indirect effect (scalar)
+    Indirect effect (scalar) — sum over k regressors
     """
-    # Source column indices for period s
-    src_cols = [_unit_idx(i, s, n) for i in range(n)]
+    beta  = np.atleast_1d(np.asarray(beta,  float))
+    theta = np.atleast_1d(np.asarray(theta, float))
 
-    # Weight row sums for source units in period s  (used for WX term)
-    # col sum of W at row (i,s) gives the spatial lag weight of X_{i,s}
-    w_row_sums_s = W[src_cols, :].sum(axis=1)  # (n,) row sums of W for source period
+    # Source column indices for period s
+    src_cols     = [_unit_idx(i, s, n) for i in range(n)]
+    w_row_sums_s = W[src_cols, :].sum(axis=1)   # (n,) row sums at source period
+
+    # Scalar marginal effect for each source unit i: Σ_j (β_j + θ_j·w_i)
+    marg = float(beta.sum()) + float(theta.sum()) * w_row_sums_s   # (n,)
 
     if r is None:
-        # Average over destination units in period t
-        dst_rows = [_unit_idx(ri, t, n) for ri in range(n)]
-        effect = 0.0
-        for col_i, i in enumerate(range(n)):
-            src = src_cols[col_i]
-            w_i = w_row_sums_s[col_i]
-            for row in dst_rows:
-                effect += T_mat[row, src] * (beta + theta * w_i)
-        return effect / n
+        dst_rows = np.array([_unit_idx(ri, t, n) for ri in range(n)])
+        # T_mat[dst_rows, :][:, src_cols] is (n_dst, n_src)
+        T_sub = T_mat[np.ix_(dst_rows, src_cols)]   # (n, n)
+        return float(T_sub.sum(axis=0) @ marg) / n
     else:
         dst = _unit_idx(r, t, n)
-        effect = sum(
-            T_mat[dst, src_cols[i]] * (beta + theta * w_row_sums_s[i])
-            for i in range(n)
-        )
-        return float(effect)
+        T_row = T_mat[dst, src_cols]    # (n,)
+        return float(T_row @ marg)
 
 
 def cross_period_effects_matrix(T_mat: np.ndarray,
-                                beta: float,
-                                theta: float,
+                                beta,
+                                theta,
                                 W: np.ndarray,
                                 n: int,
                                 TT: int) -> np.ndarray:
     """
     Compute all T×T average cross-period effects  IE_{t←s}.
+
+    beta, theta may be scalars (k=1) or (k,) arrays (k>1).
 
     Returns
     -------
@@ -178,7 +180,7 @@ def delta_method_se(fn,
     kappa      : (p,) parameter estimates
     avar_kappa : (p, p) asymptotic variance of sqrt(N)·(κ̂ − κ₀)
     N          : sample size
-    h          : finite-difference step
+    h          : base finite-difference step (scaled to parameter magnitude)
 
     Returns
     -------
@@ -188,8 +190,10 @@ def delta_method_se(fn,
     p    = len(kappa)
     grad = np.zeros(p)
     for j in range(p):
-        e = np.zeros(p); e[j] = h
-        grad[j] = (fn(kappa + e) - fn(kappa - e)) / (2 * h)
+        # Relative step: h_j = max(h, h * |κ_j|) so it scales with parameter magnitude
+        hj = max(h, h * abs(float(kappa[j])))
+        e  = np.zeros(p); e[j] = hj
+        grad[j] = (fn(kappa + e) - fn(kappa - e)) / (2 * hj)
 
     var_f = float(grad @ (avar_kappa / N) @ grad)
     se    = np.sqrt(max(var_f, 0.0))
@@ -236,9 +240,9 @@ def ie_inference(T_mat: np.ndarray,
     for t in range(TT):
         for s in range(TT):
             def ie_fn(kap):
-                d_hat    = kap[delta_idx]
-                beta_hat = kap[beta_slice].mean()  # scalar summary for k>1
-                theta_hat= kap[theta_slice].mean()
+                d_hat     = kap[delta_idx]
+                beta_hat  = kap[beta_slice]   # (k,) vector
+                theta_hat = kap[theta_slice]  # (k,) vector
                 try:
                     Tm = multiplier_matrix(d_hat, W)
                 except Exception:
