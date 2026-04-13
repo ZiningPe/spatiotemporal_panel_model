@@ -6,7 +6,7 @@ Spatial Durbin Models with endogenous Spatio-Temporal Weight Matrices.
 
 Moment conditions
 -----------------
-Linear moments  (k+2 conditions for k regressors in X):
+Linear moments  (3k+1 conditions for k regressors in X):
     E[Q' ξ] = 0,    Q = [X, WX, W²X, ε̄̂]
 
 Quadratic moments  (2 additional conditions):
@@ -152,7 +152,8 @@ def cf_gmm(Y: np.ndarray,
         g = moment_vector(kappa, sigma2, Y, U_tilde, Q_mat, W_, WtW, trW, trWtW)
         return float(g @ Psi_inv @ g)
 
-    Psi_inv = np.eye(n_kappa + 2)
+    n_moments = Q_mat.shape[1] + 2   # 3k+3; fixes k>=2 dimension bug
+    Psi_inv = np.eye(n_moments)
     x0 = np.zeros(n_kappa + 1)
     x0[-1] = sigma2_init
 

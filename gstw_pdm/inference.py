@@ -211,51 +211,83 @@ def ie_inference(T_mat: np.ndarray,
                  beta_slice: slice = None,
                  theta_slice: slice = None) -> dict:
     """
-    Compute IE_{t←s} matrix together with Delta-method standard errors,
-    t-statistics, and p-values.
+    Compute IE_{t←s} matrix with Delta-method SEs using analytical gradients.
 
-    Assumes κ = [δ, β (k,), θ (k,), δ_c] with k=1 (single regressor case).
-    For k>1 set beta_slice and theta_slice explicitly.
+    Assumes κ = [δ, β (k,), θ (k,), δ_c].  For k>1 set beta_slice /
+    theta_slice explicitly.
+
+    Analytical gradients (no repeated matrix inversion):
+        ∂IE/∂β_j  = T_sub.sum() / n              (same for all j)
+        ∂IE/∂θ_j  = T_sub.sum(0) @ w_s / n       (same for all j)
+        ∂IE/∂δ    = F_sub.sum(0) @ marg / n       F = T·W·T
+        ∂IE/∂δ_c  = 0
+
+    T_mat and F = T·W·T are pre-computed once (2 matrix ops total vs
+    O(p·T²) inversions with numerical differentiation).
 
     Parameters
     ----------
+    T_mat       : (N, N) pre-computed multiplier (I − δ̂W)⁻¹
     delta_idx   : index of δ in kappa
-    beta_slice  : slice for β coefficients in kappa
-    theta_slice : slice for θ coefficients in kappa
+    beta_slice  : slice for β in kappa
+    theta_slice : slice for θ in kappa
 
     Returns
     -------
     dict with IE (TT×TT), SE (TT×TT), t_stat (TT×TT), p_value (TT×TT)
     """
     p = len(kappa)
-    k = (p - 2) // 2  # infer k from total params
+    k = (p - 2) // 2
     if beta_slice is None:
         beta_slice  = slice(1, 1 + k)
     if theta_slice is None:
         theta_slice = slice(1 + k, 1 + 2 * k)
 
+    beta_hat  = kappa[beta_slice]    # (k,)
+    theta_hat = kappa[theta_slice]   # (k,)
+    sum_beta  = float(beta_hat.sum())
+    sum_theta = float(theta_hat.sum())
+
+    # F = T·W·T  — needed for ∂IE/∂δ  (one matrix multiply, no inversion)
+    F = T_mat @ W @ T_mat   # (N, N)
+
+    avar_per_obs = avar_kappa / N   # (p, p)
+
     IE_mat = np.zeros((TT, TT))
     SE_mat = np.zeros((TT, TT))
 
     for t in range(TT):
+        dst_rows = np.array([_unit_idx(ri, t, n) for ri in range(n)])
         for s in range(TT):
-            def ie_fn(kap):
-                d_hat     = kap[delta_idx]
-                beta_hat  = kap[beta_slice]   # (k,) vector
-                theta_hat = kap[theta_slice]  # (k,) vector
-                try:
-                    Tm = multiplier_matrix(d_hat, W)
-                except Exception:
-                    return np.nan
-                return cross_period_effect(Tm, beta_hat, theta_hat, W, n, t, s)
+            src_cols = np.array([_unit_idx(i, s, n) for i in range(n)])
+            w_s      = W[np.ix_(src_cols, np.arange(W.shape[1]))].sum(1)  # (n,)
+            marg     = sum_beta + sum_theta * w_s                          # (n,)
 
-            ie_val, ie_se = delta_method_se(ie_fn, kappa, avar_kappa, N)
+            T_sub = T_mat[np.ix_(dst_rows, src_cols)]   # (n, n)
+            col_sum = T_sub.sum(axis=0)                  # (n,)
+
+            ie_val = float(col_sum @ marg) / n
             IE_mat[t, s] = ie_val
-            SE_mat[t, s] = ie_se
+
+            # Analytical gradient  ∂IE/∂κ
+            grad = np.zeros(p)
+            # ∂/∂δ: use F_sub
+            F_sub = F[np.ix_(dst_rows, src_cols)]
+            grad[delta_idx] = float(F_sub.sum(axis=0) @ marg) / n
+            # ∂/∂β_j: same for all j
+            d_beta = T_sub.sum() / n
+            grad[beta_slice] = d_beta
+            # ∂/∂θ_j: same for all j
+            d_theta = float(col_sum @ w_s) / n
+            grad[theta_slice] = d_theta
+            # ∂/∂δ_c = 0 (already zero)
+
+            var_ie = float(grad @ avar_per_obs @ grad)
+            SE_mat[t, s] = np.sqrt(max(var_ie, 0.0))
 
     with np.errstate(divide="ignore", invalid="ignore"):
         t_stat = np.where(SE_mat > 0, IE_mat / SE_mat, np.nan)
-    p_val  = 2 * scipy_stats.norm.sf(np.abs(t_stat))
+    p_val = 2 * scipy_stats.norm.sf(np.abs(t_stat))
 
     return {
         "IE"     : IE_mat,

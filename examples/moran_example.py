@@ -14,7 +14,7 @@ DGP
 """
 
 import numpy as np
-from spatiotemporal_panel_model import (
+from gstw_pdm import (
     rook_weights, compute_morans_i, build_twm_from_stats, build_stwm,
     stwm_summary, eigvals_kronecker,
     first_stage, first_stage_stats, aggregate_eps_hat,
@@ -122,7 +122,7 @@ Q    = np.column_stack([X, WX, W2X, bar_eps_hat[:, None]])
 omega = omega_A_simple(Q, Z_W, n, T,
                         delta_c_hat=res_2sls["kappa"][-1],
                         sigma2_eps=sig2_eps)
-from spatiotemporal_panel_model import cf_2sls_avar, cf_2sls_se
+from gstw_pdm import cf_2sls_avar, cf_2sls_se
 avar_corr = cf_2sls_avar(Y, X, W, bar_eps_hat,
                           res_2sls["kappa"], omega_A=omega)
 se_corr   = cf_2sls_se(avar_corr, N)

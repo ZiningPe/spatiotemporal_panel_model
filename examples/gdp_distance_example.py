@@ -15,7 +15,7 @@ without requiring proprietary data.
 """
 
 import numpy as np
-from spatiotemporal_panel_model import (
+from gstw_pdm import (
     rook_weights, inverse_distance_weights,
     build_twm_from_stats, build_twm_parametric, build_stwm, stwm_summary,
     compute_morans_i,

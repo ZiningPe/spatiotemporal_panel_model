@@ -64,30 +64,47 @@ def first_stage_stats(h: np.ndarray,
         Z_W = Z_W[:, None]
 
     L, k = Z_W.shape
-    eps_hat, pi_hat = first_stage(h, Z_W)
-    fitted  = h - eps_hat
-    sigma2  = float(eps_hat @ eps_hat) / max(L - k, 1)
 
-    # R²
+    # R², F, and σ² require a model with an intercept.
+    # If Z_W has no constant column, augment it so the formulas are valid.
+    _col_const = np.all(np.abs(np.diff(Z_W, axis=0)) < 1e-10, axis=0)
+    if not _col_const.any():
+        Z_W_aug = np.column_stack([np.ones(L), Z_W])
+    else:
+        Z_W_aug = Z_W
+
+    eps_hat, pi_hat = first_stage(h, Z_W_aug)
+    fitted  = h - eps_hat
+    k_aug   = Z_W_aug.shape[1]
+    sigma2  = float(eps_hat @ eps_hat) / max(L - k_aug, 1)
+
+    # R²  (valid because the model now contains an intercept)
     h_mean = h.mean()
     SS_tot = float((h - h_mean) @ (h - h_mean))
     SS_res = float(eps_hat @ eps_hat)
-    R2 = 1.0 - SS_res / SS_tot if SS_tot > 1e-15 else 0.0
+    R2 = max(0.0, 1.0 - SS_res / SS_tot) if SS_tot > 1e-15 else 0.0
 
-    # F-statistic  (H₀: all π = 0)
-    SS_reg = SS_tot - SS_res
-    df_reg = k
-    df_res = L - k
+    # F-statistic  (H₀: all slope coefficients = 0, excl. intercept)
+    df_reg = k_aug - 1    # number of slope coefficients
+    df_res = L - k_aug
     if df_res > 0 and df_reg > 0:
+        SS_reg = SS_tot - SS_res
         F_stat = (SS_reg / df_reg) / (SS_res / df_res)
         F_pval = float(scipy_stats.f.sf(F_stat, df_reg, df_res))
     else:
         F_stat = np.nan
         F_pval = np.nan
 
+    # Return eps_hat from the original Z_W (without added intercept)
+    # for downstream control-function use, if intercept was added here
+    if not _col_const.any():
+        eps_hat_cf, pi_hat_cf = first_stage(h, Z_W)
+    else:
+        eps_hat_cf, pi_hat_cf = eps_hat, pi_hat
+
     return {
-        "eps_hat" : eps_hat,
-        "pi_hat"  : pi_hat,
+        "eps_hat" : eps_hat_cf,   # residuals from original Z_W (for CF use)
+        "pi_hat"  : pi_hat_cf,
         "fitted"  : fitted,
         "sigma2"  : sigma2,
         "R2"      : round(R2, 6),

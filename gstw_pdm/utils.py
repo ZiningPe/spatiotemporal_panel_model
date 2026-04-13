@@ -1,7 +1,7 @@
 """
 utils.py
 --------
-Miscellaneous utility functions used across the spatiotemporal_panel_model package.
+Miscellaneous utility functions used across the gstw_pdm package.
 
 Contents
 --------

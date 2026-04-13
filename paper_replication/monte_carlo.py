@@ -11,7 +11,7 @@ Usage
 -----
     python monte_carlo.py --exp all --reps 500 --seed 42
 
-This module replicates the simulations using the spatiotemporal_panel_model package
+This module replicates the simulations using the gstw_pdm package
 instead of the standalone script, so the package API is exercised.
 """
 
@@ -21,7 +21,7 @@ import numpy as np
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-from spatiotemporal_panel_model import (
+from gstw_pdm import (
     rook_weights, build_twm_parametric, build_stwm,
     first_stage, aggregate_eps_hat,
     cf_2sls, cf_2sls_avar, cf_2sls_se,

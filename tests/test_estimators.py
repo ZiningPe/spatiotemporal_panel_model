@@ -1,7 +1,7 @@
 """
 test_estimators.py
 ------------------
-Unit and integration tests for spatiotemporal_panel_model.
+Unit and integration tests for gstw_pdm.
 
 Run with:  pytest tests/ -v
 """
@@ -13,7 +13,7 @@ from numpy.testing import assert_allclose
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from spatiotemporal_panel_model import (
+from gstw_pdm import (
     rook_weights, build_twm_parametric, build_stwm, stwm_summary,
     compute_morans_i, eigvals_kronecker, logdet_kronecker,
     first_stage, aggregate_eps_hat,
@@ -317,7 +317,7 @@ class TestUtils:
 
     def test_check_admissibility(self, small_dgp):
         dgp = small_dgp
-        from spatiotemporal_panel_model import eigvals_kronecker
+        from gstw_pdm import eigvals_kronecker
         eM, eWS = eigvals_kronecker(dgp["M"], dgp["W_S"])
         assert check_admissibility(0.2, eM, eWS)
         assert not check_admissibility(100.0, eM, eWS)
