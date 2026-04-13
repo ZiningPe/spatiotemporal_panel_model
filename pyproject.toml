@@ -3,9 +3,9 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spatiotemporal-cf"
+name = "GSTW-PDM"
 version = "0.1.0"
-description = "Control-Function estimators for Spatial Durbin Models with endogenous Spatio-Temporal Weight Matrices"
+description = "Generalized Spatio-Temporally Weighted Panel Data Model: Control-Function estimators (CF-2SLS, CF-QMLE, CF-GMM) for Spatial Durbin Models with endogenous Spatio-Temporal Weight Matrices"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"

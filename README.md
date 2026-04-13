@@ -1,8 +1,14 @@
-# gstw_pdm
+# GSTW-PDM
 
-**Control-Function estimators for Spatial Durbin Models with endogenous Spatio-Temporal Weight Matrices (STWM)**
+**Generalized Spatio-Temporally Weighted Panel Data Model**
 
-Implements and extends the methodology of *Wang (2025): "Endogenous Spatio-Temporal Weight Matrices and the Control-Function Approach"*, integrating with the [ZiningPe/STWM](https://github.com/ZiningPe/STWM) package for weight-matrix construction.
+Control-Function estimators (CF-2SLS, CF-QMLE, CF-GMM) for Spatial Durbin Models with endogenous Spatio-Temporal Weight Matrices.
+
+Implements and extends the methodology of *Wang (2025): "Generalized Spatio-Temporally Weighted Panel Data Model"*, integrating with the [ZiningPe/STWM](https://github.com/ZiningPe/STWM) package for weight-matrix construction.
+
+```bash
+pip install git+https://github.com/ZiningPe/GSTW-PDM.git
+```
 
 ---
 
@@ -27,7 +33,7 @@ Implements and extends the methodology of *Wang (2025): "Endogenous Spatio-Tempo
 ## Installation
 
 ```bash
-pip install git+https://github.com/YOUR_USERNAME/gstw_pdm.git
+pip install git+https://github.com/ZiningPe/GSTW-PDM.git
 ```
 
 Or install locally:
@@ -178,8 +184,8 @@ print_ie_table({**ie, **mt})
 ## Package structure
 
 ```
-gstw_pdm/
-├── gstw_pdm/
+GSTW-PDM/
+├── gstw_pdm/            ← Python import name
 │   ├── weight_construction.py   # W = M ⊗ W_S, Moran/parametric TWM
 │   ├── first_stage.py           # OLS h = Z_W π + ε → ε̂
 │   ├── control_function.py      # ε̄̂ = A ε̂ (L=T or L=N)
@@ -204,12 +210,11 @@ gstw_pdm/
 ## Citation
 
 ```bibtex
-@software{gstw_pdm2025,
+@software{GSTW-PDM2025,
   author  = {Wang, Zining},
-  title   = {spatiotemporal\_cf: Control-Function Estimators for
-             Spatial Durbin Models with Endogenous STWM},
+  title   = {{GSTW-PDM}: Generalized Spatio-Temporally Weighted Panel Data Model},
   year    = {2025},
-  url     = {https://github.com/YOUR_USERNAME/gstw_pdm}
+  url     = {https://github.com/ZiningPe/GSTW-PDM}
 }
 ```
 
